@@ -9,6 +9,9 @@
  * installed per mount without any cross-package imports.
  */
 
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { Service } from '@deepseek-ai/cordis'
 import { TeamService, NO_ACTIVE_PEER_MESSAGE } from './core/index.js'
 import { apply as applyTools, Config as ToolsConfig, name as toolsName, inject as toolsInject } from './tools/index.js'
@@ -59,6 +62,32 @@ const ROLE_APPLY: Record<TeamRole, RolePlugin> = {
 /** Default role for a mount that declares none — the core service. */
 const DEFAULT_ROLE: TeamRole = 'core'
 
+/**
+ * Activation diagnosis: one line per event into ~/.dsh/logs/dsh-multeam-activate.log.
+ *
+ * cordis holds an INACTIVE fiber without ever calling `apply` when its inject
+ * deps are missing, so an `apply:start` line absent while `module:loaded` is
+ * present proves "loaded but gated on inject", not a throw. Conversely a
+ * missing `module:loaded` means the bundle never resolved at all.
+ * Logging is best-effort — a write failure must never take the plugin down.
+ */
+const ACTIVATION_LOG = join(homedir(), '.dsh', 'logs', 'dsh-multeam-activate.log')
+
+function activationLog(event: string): void {
+	try {
+		mkdirSync(join(homedir(), '.dsh', 'logs'), { recursive: true })
+		appendFileSync(ACTIVATION_LOG, `${new Date().toISOString()} ${event}\n`, 'utf8')
+	} catch {
+		// diagnosis must never break the plugin
+	}
+}
+
+function formatError(error: unknown): string {
+	return error instanceof Error ? (error.stack ?? error.message) : String(error)
+}
+
+activationLog('module:loaded')
+
 function resolveRole(config: Record<string, unknown> | undefined): TeamRole {
 	const raw = config?.role
 	return typeof raw === 'string' && raw in ROLE_APPLY ? (raw as TeamRole) : DEFAULT_ROLE
@@ -102,12 +131,24 @@ function resolveRole(config: Record<string, unknown> | undefined): TeamRole {
  * takes the whole host process down minutes after startup.
  */
 export function apply(ctx: never, config: Record<string, unknown> = {}): void | Promise<void> {
-	const plugin = ROLE_APPLY[resolveRole(config)]
-	if (plugin.prototype instanceof Service) return new (plugin as new (ctx: never, config?: Record<string, unknown>) => unknown)(ctx, config) as never
-	return (plugin as RoleApply)(ctx, config)
+	const role = resolveRole(config)
+	activationLog(`apply:start role=${role}`)
+	const plugin = ROLE_APPLY[role]
+	try {
+		const result =
+			plugin.prototype instanceof Service
+				? (new (plugin as new (ctx: never, config?: Record<string, unknown>) => unknown)(ctx, config) as never)
+				: ((plugin as RoleApply)(ctx, config) as never)
+		activationLog(`apply:done role=${role}`)
+		return result as never
+	} catch (error) {
+		activationLog(`apply:throw role=${role} error=${formatError(error)}`)
+		throw error
+	}
 }
 
 export { TeamService, NO_ACTIVE_PEER_MESSAGE }
+export { activationLog }
 export { applyTools, ToolsConfig, toolsInject }
 export { TeamScheduler, SchedulerConfig, schedulerInject }
 // The whole core surface is re-exported from the single host bundle so consumers

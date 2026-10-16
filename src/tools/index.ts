@@ -3,6 +3,7 @@
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { compressReport, errorMessage, NO_ACTIVE_PEER_MESSAGE, scopesOverlap, taskId } from '../core/index.js'
+import { activationLog } from '../index.js'
 import type { TeamAgent, TeamMemberView, TeamTaskView } from '../core/types.js'
 
 /** Cordis plugin name. */
@@ -153,6 +154,9 @@ const TASK_VIEW_SCHEMA = {
 		updatedAt: { type: 'integer' },
 		history: { type: 'array', items: { type: 'json' } },
 		conflicts: { type: 'array', items: { type: 'json' } },
+		/* 完工任务 description 被压缩为骨架时投影补 true；未声明会导致
+		 * additionalProperties:false 校验拒绝整个任务视图。 */
+		descriptionTruncated: { type: 'boolean' },
 		// Returned only by multeam_task_update after a blind-retry succeeded.
 		retried: {
 			type: 'boolean',
@@ -193,7 +197,8 @@ const STATUS_VALUE_SCHEMA = {
 	properties: {
 		members: { type: 'array', items: MEMBER_VIEW_SCHEMA },
 		tasks: { type: 'array', items: TASK_VIEW_SCHEMA },
-		failure: { type: 'string' },
+		/* DSL 不认 `nullable`：可空字段用 exact-one oneOf 表达（string | null）。 */
+		failure: { oneOf: [{ type: 'string' }, { type: 'null' }] },
 		pendingMessages: {
 			type: 'array',
 			items: {
@@ -533,7 +538,11 @@ function install(agent: TeamAgent, ctx: TeamToolContext, config: { freshProvider
 					const outside = shellPaths.filter(
 						(filePath) => !normalizedScopes.some((scope) => scopesOverlap(normalizeGuardPath(filePath), scope)),
 					)
-					if (outside.length === 0) return
+					/* 只读命令不该被拒：node --check / Get-ChildItem 这类纯读或语法检查
+					 * 即使命中 scope 外路径也不该拦——否则 teammate 连验证自己做对没有
+					 * 都跑不了。仅当命令里含真实写入谓词时才按路径拦。 */
+					const SHELL_WRITE_PATTERN = /\b(?:Set-Content|Out-File|Add-Content|Set-ItemProperty|New-Item|Remove-Item|Copy-Item|Move-Item|Rename-Item|mkdir|New-Item\s+-ItemType\s+(?:Directory|File)|>>|>|tee\b|npm\s+install|pnpm\s+(?:add|install|remove)|git\s+(?:commit|checkout|merge|rebase|apply|rm|mv)|node\s+--(?:eval|print)\b.*\bwriteFileSync\b|fs\.writeFileSync|fs\.appendFileSync|fs\.rmSync|fs\.mkdirSync)\b/i
+					if (outside.length === 0 || !SHELL_WRITE_PATTERN.test(command)) return
 					ctx.agentTeams.metrics.writeScopeRuntimeDenials++
 					return `write outside assigned write_scopes (shell command): ${outside.map((p) => `"${p}"`).join(', ')} is not under any scope of your in-progress task (${scopes.map((s) => `"${s}"`).join(', ')})`
 				}
@@ -1100,6 +1109,9 @@ function install(agent: TeamAgent, ctx: TeamToolContext, config: { freshProvider
 						if (wanted?.has('members')) trimmed.members = full.members
 						if (wanted?.has('tasks')) trimmed.tasks = tasks
 						if (wanted?.has('mailbox')) trimmed.pendingMessages = full.pendingMessages
+						/* 投影无故障时 failure 为 undefined，schema 允许 null——统一回写
+						 * null 而不是省略，保证调用方总能拿到字段而不必区分「缺失」
+						 * 与「校验失败」。 */
 						if (wanted?.has('failure')) trimmed.failure = full.failure ?? null
 						if (wantMetrics) {
 							trimmed.journalQueueDepth = full.journalQueueDepth
@@ -1128,8 +1140,18 @@ export function apply(ctx: TeamToolContext, config: Partial<{ freshProvider: str
 	const installed = new Map<TeamAgent, () => void>()
 	const maybeInstall = (agent: TeamAgent): void => {
 		try {
-			if (installed.has(agent) || ctx.agentTeams.tryMembership(agent) === undefined) return
+			if (installed.has(agent)) {
+				activationLog(`tool skip agent=${agent.id} reason=already-installed`)
+				return
+			}
+			const membership = ctx.agentTeams.tryMembership(agent)
+			if (membership === undefined) {
+				activationLog(`tool skip agent=${agent.id} reason=no-membership`)
+				return
+			}
+			activationLog(`tool install:start agent=${agent.id} role=${(membership as { role?: string }).role}`)
 			installed.set(agent, install(agent, ctx, resolved))
+			activationLog(`tool install:done agent=${agent.id}`)
 		} catch (error) {
 			/* One member's broken scope must not take the mount down. This runs
 			 * inside the `agent/created` emitter, so an escape becomes an uncaught
@@ -1137,6 +1159,7 @@ export function apply(ctx: TeamToolContext, config: Partial<{ freshProvider: str
 			 * leave every later member silently tool-less. */
 			const note = `tool-agent-team: install failed for ${agent.id}: ${errorMessage(error)}`
 			ctx.logger?.warn?.(note)
+			activationLog(`install:throw agent=${agent.id} error=${errorMessage(error)}`)
 			/* A member that exists but never got tools looks healthy on the Lead's
 			 * board — surface the failure on its diagnostics so a "has no tools"
 			 * incident is visible without digging through host logs. */
@@ -1147,8 +1170,11 @@ export function apply(ctx: TeamToolContext, config: Partial<{ freshProvider: str
 			}
 		}
 	}
+	activationLog(`tool sweep start count=${ctx.agents.list().length}`)
 	for (const agent of ctx.agents.list()) maybeInstall(agent)
+	activationLog('tool sweep done')
 	ctx.on('agent/created', ({ agent }) => {
+		activationLog(`tool event:created agent=${agent.id}`)
 		maybeInstall(agent)
 	})
 	ctx.on('agent/disposed', ({ agent }) => {

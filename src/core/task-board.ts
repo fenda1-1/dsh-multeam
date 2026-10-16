@@ -355,7 +355,9 @@ export class TeamTaskBoard {
 			if (branded === self) throw new TeamError('a team task cannot block itself', 'TEAM_TASK_DEPENDENCY_CYCLE')
 			if (seen.has(branded)) throw new TeamError(`duplicate blocker "${id}"`, 'TEAM_INVALID_ARGUMENT')
 			const task = state.tasks.find((candidate) => candidate.id === branded)
-			if (task === undefined || task.status === 'deleted') throw new TeamError(`blocker task "${id}" not found`, 'TEAM_TASK_NOT_FOUND')
+			/* 附指引：并行建任务时前置 id 尚不存在的最常见，提示先建依赖或用
+			 * set_dependencies 后补，避免调用方误判为图结构 bug。 */
+			if (task === undefined || task.status === 'deleted') throw new TeamError(`blocker task "${id}" not found — create the blocker first, or create this task without blocked_by then add it later via action:"set_dependencies"`, 'TEAM_TASK_NOT_FOUND')
 			seen.add(branded)
 			result.push(branded)
 		}

@@ -521,6 +521,7 @@ export class TeamService extends Service {
 	metricsSnapshot(caller: TeamAgent): {
 		teamId: string
 		sessionStartedAt: number
+		scope: { counters: 'process-lifetime'; gauges: 'team-live' }
 		counters: TeamMetrics
 		gauges: { journalQueueDepth: number; pendingMessages: number; activeTasks: number }
 	} {
@@ -532,6 +533,10 @@ export class TeamService extends Service {
 			// this.startedAt may be undefined — fall back to 0 rather than emit
 			// an undefined value that would fail JSON round-trip validation.
 			sessionStartedAt: this.startedAt ?? 0,
+			/* counters 是服务进程级累计（跨全部 session），gauges 是 caller 所在 Team
+			 * 实时值——scope 显式标注两套口径，避免与 scheduler.stats 的
+			 * per-session 计数误读为同一范围。 */
+			scope: { counters: 'process-lifetime', gauges: 'team-live' },
 			counters: { ...this.metrics },
 			gauges: {
 				journalQueueDepth: this.journal.queueDepth(membership.root.id),

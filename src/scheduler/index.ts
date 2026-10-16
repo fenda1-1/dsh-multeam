@@ -531,7 +531,15 @@ export class TeamScheduler extends Service {
 	 */
 	decisionSnapshot(rootId: string, limit = 20): Record<string, unknown> {
 		const dl = this.map(this.decisionLog).get(rootId) ?? []
-		return { health: this.healthCheck(), stats: this.getStats(rootId), decisions: dl.slice(-Math.max(0, limit)) }
+		/* health.recentAlerts 是跨全部 session 的全局告警——只透出当前 rootId
+		 * 相关条目，避免 status 响应混入无关 session 的历史 timeout；healthCheck()
+		 * 本身保留全局口径供运维面使用。stats 补 scope 标注 per-session 口径，
+		 * 与 metrics.counters(process-lifetime) 区分。 */
+		return {
+			health: { ...this.healthCheck(), recentAlerts: (this.alertLog ?? []).filter((a) => a.sessionId === rootId).slice(-10) },
+			stats: { ...this.getStats(rootId), scope: 'session' },
+			decisions: dl.slice(-Math.max(0, limit)),
+		}
 	}
 
 	/** Serialize one session's passes; concurrent events coalesce into one re-run. */

@@ -400,6 +400,14 @@ const teamMessageViewSchema = z
 	})
 	.strict()
 
+const teamWriteScopeConflictSchema = z
+	.object({
+		taskId: teamTaskIdSchema,
+		ownerId: z.string().optional(),
+		scopes: z.array(z.string()),
+	})
+	.strict()
+
 const teamTaskViewSchema = z
 	.object({
 		id: teamTaskIdSchema,
@@ -413,6 +421,7 @@ const teamTaskViewSchema = z
 		ownerName: z.string().optional(),
 		ready: z.boolean(),
 		writeScopeWarnings: z.array(z.string()),
+		conflicts: z.array(teamWriteScopeConflictSchema).optional(),
 		acceptance: z.array(z.string()).optional(),
 		priority: z.string().optional(),
 		createdAt: z.number().optional(),

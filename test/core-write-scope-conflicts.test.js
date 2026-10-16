@@ -178,3 +178,50 @@ test("write_scope: no overlap → no conflicts", async () => {
 	assert.equal(claimed2.conflicts, undefined, "non-overlapping scopes produce no conflicts");
 	assert.equal(claimed2.writeScopeWarnings.length, 0, "no warnings either");
 });
+
+/**
+ * 回归：view schema 必须接受带 conflicts 的任务视图。
+ *
+ * projectTaskView 会输出 view.conflicts，但 teamTaskViewSchema 是
+ * z.strict() —— 漏掉该字段时，dsh-session-projection 的 wire.viewSchema.parse
+ * 会抛 unrecognized_keys(["conflicts"])，整个会话历史加载失败
+ * （failed to project session: SESSION_QUERY_CORRUPT_SESSION）。
+ */
+test("write_scope: view schema accepts conflicts (projection strict-schema regression)", async () => {
+	const backend = makeBackend();
+	const journal = await seedTeam(backend);
+	const board = new TeamTaskBoard(journal, 100);
+
+	const aliceMembership = { root: ROOT, id: ROOT_ID, role: "teammate", name: "alice" };
+	const aliceCaller = { id: "m-alice", name: "alice" };
+	const bobMembership = { root: ROOT, id: ROOT_ID, role: "teammate", name: "bob" };
+	const bobCaller = { id: "m-bob", name: "bob" };
+
+	const v1 = await board.create(aliceMembership, {
+		subject: "t1", description: "d", writeScopes: ["src/"],
+	});
+	await board.update(aliceCaller, aliceMembership, {
+		taskId: v1.id, expectedRevision: 1, action: "claim",
+	});
+
+	const v2 = await board.create(bobMembership, {
+		subject: "t2", description: "d", writeScopes: ["src/auth/"],
+	});
+	const claimed2 = await board.update(bobCaller, bobMembership, {
+		taskId: v2.id, expectedRevision: 1, action: "claim",
+	});
+	assert.ok(Array.isArray(claimed2.conflicts) && claimed2.conflicts.length > 0, "conflict produced");
+
+	// 真实状态 → 真实 view → 真实 wire schema（与 dsh-session-projection 同一条路径）
+	const state = backend.sessionProjections.stateOf(ROOT, "agentTeam");
+	const { wire } = teamProjectionDefinition;
+	const view = wire.view(state);
+	assert.ok(
+		view.tasks.some((t) => Array.isArray(t.conflicts) && t.conflicts.length > 0),
+		"view carries conflicts",
+	);
+	assert.doesNotThrow(
+		() => wire.viewSchema.parse(structuredClone(view)),
+		"strict view schema must accept conflicts",
+	);
+});
