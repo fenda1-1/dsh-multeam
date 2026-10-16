@@ -1,0 +1,109 @@
+# Multeam profile layer.
+#
+# One npm package (`dsh-multeam`) carries every Agent Teams role. This
+# patch mounts it four times with distinct `id`s — cordis dedupes on `id`, not on
+# `name`, so each mount is an independent fiber and each installs a different
+# layer selected by `config.role`.
+#
+# Apply after dsh-base so the subagent replacements below keep direct delegation
+# and coordination on the Team tools.
+#
+# `inject:` on each row is REQUIRED, not decorative. The services these mounts
+# need (`agents`, `sessions`, `sessionProjections`, `tools`, …) are provided by
+# sibling loader entries, not by an ancestor of the mount, so cordis's ancestor
+# walk cannot reach them. The loader folds this entry option into the fiber's
+# inject set (`Inject.resolve(fiber.entry.options.inject, fiber.inject)`) before
+# the fiber decides whether to activate, so the mount waits for its services and
+# every later read on the mount context resolves. Without it the mount activates
+# immediately with an empty inject set and the first later read — the core
+# service's dead-letter sweep timer, the tools layer's `agent/created` handler —
+# throws `cannot get property "agents" without inject` and takes the host down.
+# The package cannot declare these statically: one module object carries all four
+# roles, so a single `plugin.inject` would be wrong for three of them and
+# self-deadlocking for core (which provides `agentTeams` itself).
+
+- id: tool-subagent-control
+  disabled: true
+
+- id: tool-subagent-list-agents
+  disabled: true
+
+- id: tool-subagent
+  disabled: true
+
+- id: tool-subagent-fork
+  disabled: true
+
+- insert:
+    # Core service: roster, durable mailbox, shared task DAG, event-sourced
+    # projection. Everything else depends on it.
+    - id: agent-team
+      name: 'dsh-multeam'
+      inject:
+        - agents
+        - sessions
+        - sessionPersistence
+        - sessionProjections
+        - subagents
+      config:
+        role: core
+        maxMembers: 8
+        maxTasks: 256
+        maxPendingMessagesPerMember: 64
+        maxMessageBytes: 65536
+        disposalTimeoutMs: 5000
+
+    # Model-facing tool layer: multeam_spawn/send/list/wait/interrupt/broadcast/
+    # release plus the task board tools, installed per live member scope.
+    - id: tool-agent-team
+      name: 'dsh-multeam'
+      inject:
+        - agents
+        - agentTeams
+        - tools
+        - systemPrompt
+      config:
+        role: tools
+        freshProvider: spawn
+        forkProvider: fork
+        enforceWriteScopes: true
+
+    # Browser layer: the conversation-header action and the sidebar team board.
+    # The browser entry registers itself from `dsh.client`. `role: ui` keeps the
+    # host half a no-op — the default role is core, and a second core mount here
+    # would provide("agentTeams") twice and fail. It installs no host service, so
+    # it must not wait for any either.
+    - id: ui-agent-team
+      name: 'dsh-multeam'
+      inject: []
+      config:
+        role: ui
+
+    # DAG scheduler: watches team/task and team/member journal events and wakes
+    # the owner of every newly-ready task via agentTeams.sendMessage, turning the
+    # passive task board into an active DAG scheduler.
+    - id: team-scheduler
+      name: 'dsh-multeam'
+      inject:
+        - agentTeams
+        - agents
+        - sessionProjections
+      config:
+        role: scheduler
+        # v3 opt-in features (enabled after DAG dispatch passed live testing)
+        priority: true # dispatch tasks with a priority field high->low
+        timeoutDetection: true # alert lead on stale in_progress tasks
+        timeoutMs: 300000 # 5 minutes before an in_progress task alerts
+        timeoutAlertIntervalMs: 300000 # repeat the timeout alert every 5min while still in_progress (0=once)
+        loadBalance: true # unassigned-task steer message includes per-teammate load stats
+        # v4 opt-in
+        retryLimit: 2 # retry failed owner wakes twice, then alert lead once
+        capabilityMatch: true # unassigned-task steer message appends capability keyword hints
+        learnedHints: true # 经验传承：完成任务时可附 lesson 字段，同能力任务的后续 teammate 会看到它
+        compressInject: true # 注入压缩：任务 description 超阈值时唤醒/steer 消息只带骨架版（compressSaved 计量透出）
+        # v7 opt-in: stall detection (state signature compare: tasks + member
+        # phases + mailbox pending; signature silent >= stallThresholdMs while
+        # tasks remain unfinished -> steer lead once)
+        stallDetection: true
+        stallThresholdMs: 300000 # 5 minutes of silent signature counts as stalled
+        stallCheckIntervalMs: 60000 # compare the signature every 60 seconds

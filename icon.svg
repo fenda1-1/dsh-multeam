@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a1b26"/>
+      <stop offset="1" stop-color="#24283b"/>
+    </linearGradient>
+    <linearGradient id="lead" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7aa2f7"/>
+      <stop offset="1" stop-color="#5a7fd6"/>
+    </linearGradient>
+    <linearGradient id="mate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9ece6a"/>
+      <stop offset="1" stop-color="#7fb356"/>
+    </linearGradient>
+    <linearGradient id="mate2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e0af68"/>
+      <stop offset="1" stop-color="#c89548"/>
+    </linearGradient>
+    <linearGradient id="mate3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#bb9af7"/>
+      <stop offset="1" stop-color="#9a7ad6"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)"/>
+
+  <!-- edges -->
+  <line x1="32" y1="17" x2="16" y2="42" stroke="#414868" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="32" y1="17" x2="48" y2="42" stroke="#414868" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="16" y1="46" x2="48" y2="46" stroke="#414868" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- lead node (top) -->
+  <circle cx="32" cy="17" r="9" fill="url(#lead)"/>
+  <circle cx="32" cy="14" r="3" fill="#1a1b26" opacity=".35"/>
+  <path d="M27 21 a5 5 0 0 1 10 0 z" fill="#1a1b26" opacity=".35"/>
+
+  <!-- teammate left -->
+  <circle cx="16" cy="45" r="7.5" fill="url(#mate)"/>
+  <!-- teammate right -->
+  <circle cx="48" cy="45" r="7.5" fill="url(#mate2)"/>
+  <!-- teammate bottom-center -->
+  <circle cx="32" cy="50" r="7.5" fill="url(#mate3)"/>
+</svg>
