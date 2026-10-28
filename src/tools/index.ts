@@ -218,6 +218,15 @@ const STATUS_VALUE_SCHEMA = {
 			properties: {
 				teamId: { type: 'string' },
 				sessionStartedAt: { type: 'number' },
+				/* counters 跨全 session 累计，gauges 是本 Team 实时值——scope 标注口径。 */
+				scope: {
+					type: 'object',
+					additionalProperties: false,
+					properties: {
+						counters: { type: 'string', required: true },
+						gauges: { type: 'string', required: true },
+					},
+				},
 				counters: {
 					type: 'object',
 					additionalProperties: false,
@@ -283,6 +292,8 @@ const STATUS_VALUE_SCHEMA = {
 								timeoutAlerts: { type: 'number' },
 								retryExhausted: { type: 'number' },
 								passes: { type: 'number' },
+								/* decisionSnapshot 注入 per-session 口径标注。 */
+								scope: { type: 'string' },
 							},
 						},
 						decisions: { type: 'array', items: { type: 'json' } },
